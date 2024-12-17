@@ -53,6 +53,26 @@ services:
           cpus: '1'
           memory: 1G
 
+  scala-shit:
+    build: scala/.
+    container_name: scala-fucking-shit
+    volumes:
+      - ./scala:/app
+      - ./images:/app/images
+    ports:
+      - "8888:8888"
+    environment:
+      POSTGRES_DB: "project"
+      POSTGRES_USER: "dev"
+      POSTGRES_PASSWORD: "752113"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      HOST: "0.0.0.0"
+      PORT: "8888"
+      IMAGES_PATH: /app/images
+    depends_on:
+      - postgres
+
 
 volumes:
   habrdb-data:

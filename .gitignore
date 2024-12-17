@@ -1,5 +1,5 @@
-.bsp/
-.idea/
+scala/.bsp/
+scala/.idea/
 project
 target
 target/classes
