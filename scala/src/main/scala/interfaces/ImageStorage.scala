@@ -1,28 +1,35 @@
-package db_client
+package dbClient
 
-import scala.concurrent.Future
 import java.io.File
-import scala.util.{Either, Left, Right}
+import scala.util.{Either, Left, Right, Try, Success, Failure}
 import cats.effect.IO
-import cats.syntax.all.*
 
-import java.nio.file.{Files, Paths, StandardCopyOption, StandardOpenOption}
+import java.nio.file.{Files, Paths, StandardOpenOption}
 import errors.errors.{AppError, FailedToDeleteFile, FailedToSaveFile, ImageNotFound}
-import sttp.model.Part
 
 import java.util.{Base64, UUID}
 
 trait ImageStorage {
   def getImages: IO[Either[AppError, List[ImageObject]]]
-  def insertImage(uploadedImage: UploadedImage): IO[Either[AppError, ImageObject]]
-  def findImage(imageName: String): IO[Either[AppError, Option[ImageObject]]]
-  def getImageById(imageId: Int): IO[Either[AppError, Option[ImageObject]]]
-  def getTags(imageId: Int): IO[Either[AppError, List[ImageTagObject]]]
-  def insertImageTags(tagItems: List[TagItem]): IO[Either[AppError, List[ImageTagObject]]]
-  def deleteImage(imageId: Int): IO[Either[AppError, Int]]
-  def deleteImageTags(imageId: Int): IO[Either[AppError, Int]]
-}
 
+  def insertImage(uploadedImage: UploadedImage): IO[Either[AppError, ImageObject]]
+
+  def findImage(imageName: String): IO[Either[AppError, Option[ImageObject]]]
+
+  def getImageById(imageId: Int): IO[Either[AppError, Option[ImageObject]]]
+
+  def getTags(imageId: Int): IO[Either[AppError, List[ImageTagObject]]]
+
+  def getImagesWithoutTags: IO[Either[AppError, List[DownloadedBase64Image]]]
+
+  def insertImageTags(tagItems: List[TagItem]): IO[Either[AppError, List[ImageTagObject]]]
+
+  def deleteImage(imageId: Int): IO[Either[AppError, Int]]
+
+  def deleteImageTags(imageId: Int): IO[Either[AppError, Int]]
+
+  def searchByTag(query: String): IO[Either[AppError, List[ImageObject]]]
+}
 
 class ImageStorageImpl(psqlClient: PsqlClient, storagePath: String) extends ImageStorage {
 
@@ -54,10 +61,27 @@ class ImageStorageImpl(psqlClient: PsqlClient, storagePath: String) extends Imag
     psqlClient.getTags(imageId)
   }
 
+  override def getImagesWithoutTags: IO[Either[AppError, List[DownloadedBase64Image]]] = {
+    psqlClient.getImagesWithoutTags.map {
+      case Left(error) => Left(error)
+      case Right(images) =>
+        val uploadedImages = images.map { image =>
+          Try {
+            val bytes = Files.readAllBytes(Paths.get(image.image_path))
+            Base64.getEncoder.encodeToString(bytes)
+          } match {
+            case Success(base64) => DownloadedBase64Image(image.id, image.image_name, base64)
+            case Failure(_) => DownloadedBase64Image(image.id, image.image_name, "")
+          }
+        }
+        Right(uploadedImages)
+    }
+  }
+
   override def insertImageTags(tagItems: List[TagItem]): IO[Either[AppError, List[ImageTagObject]]] = {
-    val test = psqlClient.insertImageTags(tagItems)
-    println(test)
-    test
+    val result = psqlClient.insertImageTags(tagItems)
+    println(result)
+    result
   }
 
   override def deleteImage(imageId: Int): IO[Either[AppError, Int]] = {
@@ -67,26 +91,19 @@ class ImageStorageImpl(psqlClient: PsqlClient, storagePath: String) extends Imag
       case Right(Some(image)) =>
         IO {
           val file = new File(image.image_path)
-          if (file.exists()) {
-            if (file.delete()) {
-              Right(())
-            } else {
-              Left(FailedToDeleteFile(s"Failed to delete file at path: ${image.image_path}"))
-            }
-          } else {
-            Right(())
-          }
+          Either.cond(
+            !file.exists() || file.delete(),
+            (),
+            FailedToDeleteFile(s"Failed to delete file at path: ${image.image_path}")
+          )
         }.flatMap {
-          case Left(fileError) =>
-            IO.pure(Left(fileError))
-          case Right(_) =>
-            psqlClient.deleteImage(imageId)
+          case Left(fileError) => IO.pure(Left(fileError))
+          case Right(_) => psqlClient.deleteImage(imageId)
         }
       case Right(None) =>
         IO.pure(Left(ImageNotFound(imageId)))
     }
   }
-
 
   override def deleteImageTags(imageId: Int): IO[Either[AppError, Int]] = {
     psqlClient.deleteImageTags(imageId)
@@ -95,30 +112,20 @@ class ImageStorageImpl(psqlClient: PsqlClient, storagePath: String) extends Imag
   private def saveFile(file: UploadedImage): IO[Either[AppError, String]] = IO {
     try {
       val dirPath = Paths.get(storagePath)
-      if (!Files.exists(dirPath)) {
-        Files.createDirectories(dirPath)
-      }
+      Files.createDirectories(dirPath)
 
       val allowedExtensions = Set(".png", ".jpg", ".jpeg")
 
-      def hasAllowedExtension(fileName: String): Boolean = {
-        allowedExtensions.exists(ext => fileName.toLowerCase.endsWith(ext))
-      }
+      val finalImageName = allowedExtensions.find(ext => file.image_name.toLowerCase.endsWith(ext))
+        .fold(file.image_name + ".png")(_ => file.image_name)
 
-      val finalImageName = if (hasAllowedExtension(file.image_name)) {
-        file.image_name
-      } else {
-        file.image_name + ".png"
-      }
-
-      val uniqueFileName = UUID.randomUUID().toString + "_" + finalImageName
+      val uniqueFileName = s"${UUID.randomUUID().toString}_$finalImageName"
       val targetPath = dirPath.resolve(uniqueFileName)
 
-      val base64Data = if (file.base64Image.contains(",")) {
-        file.base64Image.split(",").last
-      } else {
-        file.base64Image
-      }
+      val base64Data = Option(file.base64Image)
+        .filter(_.contains(","))
+        .map(_.split(",").last)
+        .getOrElse(file.base64Image)
 
       val decodedBytes = Base64.getDecoder.decode(base64Data)
 
@@ -136,4 +143,7 @@ class ImageStorageImpl(psqlClient: PsqlClient, storagePath: String) extends Imag
     }
   }
 
+  override def searchByTag(query: String): IO[Either[AppError, List[ImageObject]]] = {
+    psqlClient.searchByTag(query)
+  }
 }

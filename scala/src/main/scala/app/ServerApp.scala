@@ -1,53 +1,55 @@
 package app
 
+import cats.effect.{ExitCode, IO, IOApp}
 import config.*
-import db_client.{PsqlClient, *}
+import dbClient.*
 import endpoints.Endpoints
-import sttp.model.Method
-import sttp.tapir.server.ServerEndpoint
-import sttp.tapir.server.interceptor.cors.{CORSConfig, CORSInterceptor}
-import sttp.tapir.server.netty.{FutureRoute, NettyFutureServer, NettyFutureServerInterpreter, NettyFutureServerOptions}
+import org.http4s.implicits._
+import org.http4s.server.middleware.CORS
+import sttp.tapir.server.http4s.Http4sServerInterpreter
 import sttp.tapir.swagger.bundle.SwaggerInterpreter
+import org.http4s.blaze.server.BlazeServerBuilder
+import cats.syntax.semigroupk._
+import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.*
 
-import scala.concurrent.Future
-import scala.concurrent.ExecutionContext.Implicits.global
+object ServerApp extends IOApp {
 
-object ServerApp extends App {
-  val serverConfig = AppConfig.webServerConfig
+  def run(args: List[String]): IO[ExitCode] = {
+    val serverConfig = AppConfig.webServerConfig
 
-  val psqlClient: PsqlClient = PsqlClient.make
-  val imageStorage: ImageStorage = ImageStorageImpl(psqlClient = psqlClient, storagePath = serverConfig.imagesPath)
-
-  val serverEndpoints: List[ServerEndpoint[Any, Future]] = Endpoints.serverEndpoints(imageStorage, psqlClient)
-
-  val pureEndpoints = Endpoints.allEndpoints
-
-  val swaggerEndpoints: List[ServerEndpoint[Any, Future]] =
-    SwaggerInterpreter().fromEndpoints[Future](pureEndpoints, "My App", "1.0")
-
-  val serverOptions = NettyFutureServerOptions.customiseInterceptors
-    .corsInterceptor(
-      CORSInterceptor.customOrThrow(
-        CORSConfig.default
-          .allowAllHeaders
-          .allowAllMethods
-          .allowAllOrigins
-          .allowMethods(Method.GET, Method.POST, Method.PUT, Method.DELETE, Method.OPTIONS)
-      )
+    val psqlClient: PsqlClient = PsqlClient.make
+    val imageStorage: ImageStorage = ImageStorageImpl(
+      psqlClient = psqlClient,
+      storagePath = serverConfig.imagesPath
     )
-    .options
 
-  val interpreter = NettyFutureServerInterpreter(serverOptions)
+    val serverEndpoints: List[sttp.tapir.server.ServerEndpoint[Any, IO]] =
+      Endpoints.serverEndpoints(imageStorage, psqlClient)
 
-  val swaggerRoute: FutureRoute = interpreter.toRoute(swaggerEndpoints)
+    val pureEndpoints = Endpoints.allEndpoints
 
-  val apiRoutes: FutureRoute = interpreter.toRoute(serverEndpoints)
+    val swaggerEndpoints = SwaggerInterpreter().fromEndpoints[IO](pureEndpoints, "My App", "1.0")
 
-  NettyFutureServer(serverOptions)
-    .host(serverConfig.host)
-    .port(serverConfig.port)
-    .addRoute(swaggerRoute)
-    .addRoute(apiRoutes)
-    .start()
+    val apiRoutes = Http4sServerInterpreter[IO]().toRoutes(serverEndpoints)
 
+    val swaggerRoutes = Http4sServerInterpreter[IO]().toRoutes(swaggerEndpoints)
+
+    val allRoutes = (apiRoutes <+> swaggerRoutes).orNotFound
+
+    val corsMiddleware = CORS.policy
+      .withAllowOriginAll
+      .withAllowMethodsAll
+      .withAllowHeadersAll
+      .withMaxAge(84600.seconds)
+
+    val httpAppWithCors = corsMiddleware(allRoutes)
+
+    BlazeServerBuilder[IO](ExecutionContext.global)
+      .bindHttp(serverConfig.port, serverConfig.host)
+      .withHttpApp(httpAppWithCors)
+      .resource
+      .use(_ => IO.never)
+      .as(ExitCode.Success)
+  }
 }

@@ -7,3 +7,10 @@ target/test-classes
 target/test-classes/
 target/test-classes/**
 .idea/*
+images
+python-src/*.pt
+python-src/*.jpg
+python-src/*.lock
+python-src/test.py
+python-src/.idea
+python-src/__pycache__

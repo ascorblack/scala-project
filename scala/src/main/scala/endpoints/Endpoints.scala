@@ -1,20 +1,15 @@
 package endpoints
 
-import sttp.tapir.*
-import sttp.tapir.json.circe.*
-import sttp.tapir.generic.auto.*
-import io.circe.generic.auto.*
-import db_client.*
+import sttp.tapir._
+import sttp.tapir.json.circe._
+import sttp.tapir.generic.auto._
+import io.circe.generic.auto._
+import dbClient._
 import errors.errors
 import sttp.tapir.server.ServerEndpoint
 import sttp.model.{HeaderNames, StatusCode}
-
-import scala.concurrent.Future
+import cats.effect.IO
 import app.ApiResponse.{ErrorResponse, JSONResponse}
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import cats.effect.unsafe.implicits.global
-
 import scala.io.Source
 
 object Endpoints {
@@ -57,7 +52,7 @@ object Endpoints {
       )
   }
 
-  private def readHtmlFromResource(resourcePath: String): Future[String] = Future {
+  private def readHtmlFromResource(resourcePath: String): IO[String] = IO {
     val source = Source.fromResource(resourcePath)
     try source.mkString finally source.close()
   }
@@ -119,6 +114,14 @@ object Endpoints {
         jsonBody[JSONResponse[ErrorResponse]]
       )
 
+  private val getImagesWithoutTagsEndpoint: PublicEndpoint[Unit, JSONResponse[ErrorResponse], JSONResponse[List[DownloadedBase64Image]], Any] =
+    endpoint.get
+      .in("api" / "v1" / "imagesWithoutTags")
+      .out(jsonBody[JSONResponse[List[DownloadedBase64Image]]])
+      .errorOut(
+        jsonBody[JSONResponse[ErrorResponse]]
+      )
+
   private val insertImageTagEndpoint: PublicEndpoint[List[TagItem], JSONResponse[ErrorResponse], JSONResponse[List[ImageTagObject]], Any] =
     endpoint.post
       .in("api" / "v1" / "imageTags")
@@ -137,6 +140,16 @@ object Endpoints {
         jsonBody[JSONResponse[ErrorResponse]]
       )
 
+
+  private val searchByTagEndpoint: PublicEndpoint[String, JSONResponse[ErrorResponse], JSONResponse[List[ImageObject]], Any] =
+    endpoint.get
+      .in("api" / "v1" / "search")
+      .in(query[String]("query"))
+      .out(jsonBody[JSONResponse[List[ImageObject]]])
+      .errorOut(
+        jsonBody[JSONResponse[ErrorResponse]]
+      )
+
   val allEndpoints: List[AnyEndpoint] = List(
     getImagesEndpoint,
     insertImageEndpoint,
@@ -145,17 +158,19 @@ object Endpoints {
     deleteImageEndpoint,
     getTagsEndpoint,
     insertImageTagEndpoint,
-    deleteImageTagsEndpoint
+    deleteImageTagsEndpoint,
+    getImagesWithoutTagsEndpoint,
+    searchByTagEndpoint
   )
 
-  def serverEndpoints(imageStorage: ImageStorage, psqlClient: PsqlClient): List[ServerEndpoint[Any, Future]] = {
+  def serverEndpoints(imageStorage: ImageStorage, psqlClient: PsqlClient): List[ServerEndpoint[Any, IO]] = {
 
-    val indexServer: ServerEndpoint[Any, Future] =
+    val indexServer: ServerEndpoint[Any, IO] =
       indexEndpoint.serverLogic { _ =>
         readHtmlFromResource("static/index.html").map(Right(_))
       }
 
-    val getImagesServer: ServerEndpoint[Any, Future] =
+    val getImagesServer: ServerEndpoint[Any, IO] =
       getImagesEndpoint.serverLogic { _ =>
         imageStorage.getImages.map {
           case Right(images) if images.nonEmpty =>
@@ -174,10 +189,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val insertImageServer: ServerEndpoint[Any, Future] =
+    val insertImageServer: ServerEndpoint[Any, IO] =
       insertImageEndpoint.serverLogic { uploadedImage =>
         imageStorage.insertImage(uploadedImage).map {
           case Right(image) =>
@@ -189,10 +204,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val findImageServer: ServerEndpoint[Any, Future] =
+    val findImageServer: ServerEndpoint[Any, IO] =
       findImageEndpoint.serverLogic { imageName =>
         imageStorage.findImage(imageName).map {
           case Right(Some(image)) =>
@@ -211,10 +226,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val getImageServer: ServerEndpoint[Any, Future] =
+    val getImageServer: ServerEndpoint[Any, IO] =
       getImageEndpoint.serverLogic { imageId =>
         imageStorage.getImageById(imageId).map {
           case Right(Some(image)) =>
@@ -233,10 +248,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val deleteImageServer: ServerEndpoint[Any, Future] =
+    val deleteImageServer: ServerEndpoint[Any, IO] =
       deleteImageEndpoint.serverLogic { imageId =>
         imageStorage.deleteImage(imageId).map {
           case Right(count) if count > 0 =>
@@ -255,10 +270,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val getTagsServer: ServerEndpoint[Any, Future] =
+    val getTagsServer: ServerEndpoint[Any, IO] =
       getTagsEndpoint.serverLogic { imageId =>
         imageStorage.getTags(imageId).map {
           case Right(tags) =>
@@ -270,10 +285,25 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val insertImageTagServer: ServerEndpoint[Any, Future] =
+    val getImagesWithoutTagsServer: ServerEndpoint[Any, IO] =
+      getImagesWithoutTagsEndpoint.serverLogic { _ =>
+        imageStorage.getImagesWithoutTags.map {
+          case Right(images) =>
+            Right(JSONResponse[List[DownloadedBase64Image]](
+              status = StatusCode.Ok.code,
+              message = "success",
+              data = Some(images),
+              error = None
+            ))
+          case Left(err) =>
+            Left(handleError(err))
+        }
+      }
+
+    val insertImageTagServer: ServerEndpoint[Any, IO] =
       insertImageTagEndpoint.serverLogic { tagItem =>
         imageStorage.insertImageTags(tagItem).map {
           case Right(tag) =>
@@ -285,10 +315,10 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
       }
 
-    val deleteImageTagsServer: ServerEndpoint[Any, Future] =
+    val deleteImageTagsServer: ServerEndpoint[Any, IO] =
       deleteImageTagsEndpoint.serverLogic { imageId =>
         imageStorage.deleteImageTags(imageId).map {
           case Right(count) =>
@@ -300,7 +330,23 @@ object Endpoints {
             ))
           case Left(err) =>
             Left(handleError(err))
-        }.unsafeToFuture()
+        }
+      }
+
+
+    val searchByTagServer: ServerEndpoint[Any, IO] =
+      searchByTagEndpoint.serverLogic { query =>
+        imageStorage.searchByTag(query).map {
+          case Right(result) =>
+            Right(JSONResponse[List[ImageObject]](
+              status = StatusCode.Ok.code,
+              message = "success",
+              data = Some(result),
+              error = None
+            ))
+          case Left(err) =>
+            Left(handleError(err))
+        }
       }
 
     List(
@@ -312,7 +358,9 @@ object Endpoints {
       deleteImageServer,
       getTagsServer,
       insertImageTagServer,
-      deleteImageTagsServer
+      deleteImageTagsServer,
+      getImagesWithoutTagsServer,
+      searchByTagServer
     )
   }
 }

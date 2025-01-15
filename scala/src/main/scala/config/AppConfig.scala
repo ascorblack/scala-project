@@ -10,20 +10,20 @@ object AppConfig {
   private def getEnv(key: String): Option[String] = Option(System.getenv(key))
 
   def databaseConfig: DatabaseConfig = {
-    val host = getEnv("DB_HOST").getOrElse("0.0.0.0")
-    val port = getEnv("DB_PORT").getOrElse("5435")
-    val dbName = getEnv("DB_NAME").getOrElse("project")
-    val user = getEnv("DB_USER").getOrElse("dev")
-    val password = getEnv("DB_PASSWORD").getOrElse("752113")
+    val host = getEnv("POSTGRES_HOST").getOrElse("0.0.0.0")
+    val port = getEnv("POSTGRES_PORT").getOrElse("5435")
+    val dbName = getEnv("POSTGRES_DB").getOrElse("project")
+    val user = getEnv("POSTGRES_USER").getOrElse("dev")
+    val password = getEnv("POSTGRES_PASSWORD").getOrElse("752113")
 
     val url = s"jdbc:postgresql://$host:$port/$dbName"
     DatabaseConfig(url, user, password)
   }
 
   def webServerConfig: WebServerConfig = {
-    val host = getEnv("HOST").getOrElse("0.0.0.0")
-    val port = getEnv("PORT").map(_.toInt).getOrElse(8188)
-    val imagesPath = getEnv("IMAGES_PATH").getOrElse(Source.getClass.getClassLoader.getResource("images").getPath.substring(1))
+    val host = getEnv("SERVER_HOST").getOrElse("0.0.0.0")
+    val port = getEnv("SERVER_PORT").map(_.toInt).getOrElse(8888)
+    val imagesPath = getEnv("IMAGES_PATH").getOrElse(Source.getClass.getClassLoader.getResource("images").getPath)
 
     WebServerConfig(host, port, imagesPath)
   }

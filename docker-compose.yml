@@ -37,7 +37,8 @@ services:
       POSTGRES_PASSWORD: "752113"
       PGDATA: "/var/lib/postgresql/data/pgdata"
     volumes:
-      - habrdb-data:/var/lib/postgresql/data
+      - postgresql-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d
     ports:
       - "5435:5432"
     healthcheck:
@@ -53,9 +54,9 @@ services:
           cpus: '1'
           memory: 1G
 
-  scala-shit:
+  scala:
     build: scala/.
-    container_name: scala-fucking-shit
+    container_name: scala-backend
     volumes:
       - ./scala:/app
       - ./images:/app/images
@@ -67,12 +68,18 @@ services:
       POSTGRES_PASSWORD: "752113"
       POSTGRES_HOST: "postgres"
       POSTGRES_PORT: "5432"
-      HOST: "0.0.0.0"
-      PORT: "8888"
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8888"
       IMAGES_PATH: /app/images
     depends_on:
       - postgres
 
+  background-ai:
+    build: ./python-src
+    container_name: ai-backend
+    restart: always
+    volumes:
+      - ./python-src:/app
 
 volumes:
-  habrdb-data:
+  postgresql-data:

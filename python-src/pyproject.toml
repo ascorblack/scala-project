@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "python-src"
+version = "0.1.0"
+description = ""
+authors = ["ascorblack <a@scorblack.ru>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.6"
+uvicorn = "^0.34.0"
+ultralytics = "^8.3.51"
+pillow = "^11.0.0"
+ujson = "^5.10.0"
+googletrans = "4.0.0-rc1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
